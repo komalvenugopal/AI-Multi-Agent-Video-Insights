@@ -51,3 +51,4 @@ if __name__ == "__main__":
     output_dir = source + "chunks"
     workflow = VideoProcessingWorkflow(video_path, output_dir)
     asyncio.run(workflow.split_video_and_audio())
+    
