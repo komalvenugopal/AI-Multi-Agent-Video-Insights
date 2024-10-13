@@ -214,11 +214,11 @@ if __name__ == "__main__":
     video_path = source + "movie.mp4"
     output_dir = source + "chunks"
     
-    # print("YOUTUBE: Download started")
-    # download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs', source)
+    print("YOUTUBE: Download started")
+    download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs', source)
     
-    #workflow = VideoProcessingWorkflow(video_path, output_dir)
-    # asyncio.run(workflow.split_video_and_audio())
+    workflow = VideoProcessingWorkflow(video_path, output_dir)
+    asyncio.run(workflow.split_video_and_audio())
     push_embeddings()
 
 
