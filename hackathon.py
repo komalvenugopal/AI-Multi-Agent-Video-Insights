@@ -13,7 +13,7 @@ from PIL import Image
 import ssl, base64
 from ultralytics import YOLO
 from PIL import Image
-from Embedding.embedding_generator import generate_embedding
+from Embedding.embedding_generator import generate_embedding, create_embeddings
 
 model = YOLO("yolo11n.pt")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
@@ -209,6 +209,34 @@ def encode_image(image_path):
   with open(image_path, "rb") as image_file:
     return base64.b64encode(image_file.read()).decode('utf-8')
 
+def create_yolo_chunks():
+    path ='sources/bahubali/chunks/images'
+    model = YOLO("yolo11n.pt")
+    data =[]
+    for filename in os.listdir(path):
+        print(filename)
+        timestamp = filename.split('_')[1]
+        timestamp_end = filename.split('_')[2]
+
+        filepath = path+'/'+filename
+        entry = {
+                'text': '',
+                'timestamp': timestamp,
+                'video_id': 'bahubali',
+                'agent': 'yolo'  # Replace with the appropriate value if needed
+            }
+        text ='The yolo objects in the frames from timestamp'+timestamp+'to '+timestamp_end
+        for file in os.listdir(filepath):
+            # print(file)
+            results = model(filepath+'/'+file)
+
+            text += str(results[0].to_json())
+            # print(str(results[0].to_json()))
+        entry['text'] = text
+        # print(entry)
+        data.append(entry)
+    create_embeddings(data)
+
 if __name__ == "__main__":
     source = "sources/bahubali/"
     video_path = source + "movie.mp4"
@@ -219,6 +247,7 @@ if __name__ == "__main__":
     
     workflow = VideoProcessingWorkflow(video_path, output_dir)
     asyncio.run(workflow.split_video_and_audio())
-    push_embeddings()
+    create_yolo_chunks() # this does pushiing of embeddings also 
+    push_embeddings() # this push embedding excpet yolo
 
 
