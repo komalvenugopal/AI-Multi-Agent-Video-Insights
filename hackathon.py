@@ -7,9 +7,9 @@ from pytube import YouTube
 from pytubefix import YouTube
 from pytubefix.cli import on_progress
 import os
-os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
 import ssl
 
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
 ssl._create_default_https_context = ssl._create_stdlib_context
 class VideoProcessingWorkflow:
     def __init__(self, video_path, output_dir):
@@ -73,23 +73,36 @@ def download_video(url, output_path):
     Returns:
     dict: A dictionary containing the metadata of the video.
     """
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    # Define the full path for the video
+    full_output_path = os.path.join(output_path, 'movie.mp4')
+
+    # Check if the file already exists and remove it
+    if os.path.exists(full_output_path):
+        os.remove(full_output_path)
+        print("Existing file removed.")
 
     yt = YouTube(url, on_progress_callback = on_progress)
     print(yt.title)
  
     ys = yt.streams.get_highest_resolution()
-    ys.download(output_path=output_path, filename='bahubali.mp4')
+    ys.download(output_path=output_path, filename='movie.mp4')
 
 
 if __name__ == "__main__":
     source = "sources/bahubali/"
-    video_path = source + "bahubali.mp4"
+    video_path = source + "movie.mp4"
     output_dir = source + "chunks"
     print("YOUTUBE: Download started")
     download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs',source)
+    
     # audio to text
     API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
     headers = {"Authorization": "Bearer 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"}
+
+
     def query(filename):
         with open(filename, "rb") as f:
             data = f.read()
