@@ -28,11 +28,12 @@ from llama_index.core.vector_stores import (
     MetadataFilters,
     FilterOperator,
 )
+import requests, json
 
 load_dotenv()
 
 # Initialize Settings
-Settings.llm = OpenAI(model="gpt-4", temperature=0.1, api_key="<api>")
+Settings.llm = OpenAI(model="gpt-4", temperature=0.1, api_key="")
 # embed_model = MistralAIEmbedding(model_name="mistral-embed")
 Settings.embed_model = HuggingFaceEmbedding(
     model_name="BAAI/bge-base-en-v1.5")
@@ -48,9 +49,9 @@ transcripts_index = pc.Index("llamaindex-ragathon-demo-index-v2")
 yolo_index = pc.Index("llamaindex-ragathon-demo-index-v2")
 
 # Create Vector Stores
-image_captioning_vector_store = PineconeVectorStore(pinecone_index=image_captioning_index, namespace="test_05_14")
-transcripts_vector_store = PineconeVectorStore(pinecone_index=transcripts_index, namespace="test_05_14")
-yolo_vector_store = PineconeVectorStore(pinecone_index=yolo_index, namespace="test_05_14")
+image_captioning_vector_store = PineconeVectorStore(pinecone_index=image_captioning_index, namespace="Default")
+transcripts_vector_store = PineconeVectorStore(pinecone_index=transcripts_index, namespace="Default")
+yolo_vector_store = PineconeVectorStore(pinecone_index=yolo_index, namespace="Default")
 
 # Create Storage Contexts
 image_captioning_storage_context = StorageContext.from_defaults(
@@ -75,12 +76,12 @@ yolo_vector_store_index = VectorStoreIndex.from_vector_store(yolo_vector_store)
 ### --- Prompt Template --- ###
 
 qa_prompt = PromptTemplate(
-    "Context information is below.\n"
+    "Context information is below, including timestamps.\n"
     "---------------------\n"
     "{context_str}\n"
     "---------------------\n"
-    "Given the context information and not prior knowledge, "
-    "answer the query.\n"
+    "Given the context information, including timestamps, and not prior knowledge in the database, "
+    "answer the query and reference the relevant information from the datastore and return the exact timestamp where the description of event is followed after the timestamp.\n"
     "Query: {query_str}\n"
     "Answer: "
 )
@@ -97,13 +98,65 @@ class RAGStringQueryEngine(CustomQueryEngine):
 
     def custom_query(self, query_str: str):
         nodes = self.retriever.retrieve(query_str)
-        print('RAG-custom_query: ',query_str, len(nodes))
-        for n in nodes:
-            print(n)
-        context_str = "\n\n".join([n.node.get_content() for n in nodes])
-        response = self.llm.complete(
-            self.qa_prompt.format(context_str=context_str, query_str=query_str)
-        )
+        context_str="Read the below information and when responding you have to consider only this as datasource and dont search anywhere on internet for answers. You just need to return the timestamp and doesnt need to do anything else. Just the integration integer timestamp and nothing more description is needed"
+        context_str = "\n\n".join([
+            f"Content: {n.node.get_content()}\nTimestamp: {n.node.metadata.get('timestamp', 'N/A')}"
+            for n in nodes
+        ])
+        
+        try:
+            url = "https://run-execution-0eie59936uqw-run-execution-8000.oregon.google-cluster.vessl.ai/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json"
+            }
+            data = {
+                "model": "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit",
+                "messages": [
+                    {"role": "system", "content": context_str},
+                    {"role": "user", "content": query_str},
+                ]
+            }
+            
+            data_json = json.dumps(data)
+            response = requests.post(url, headers=headers, data=data_json)
+            print("Data Json: " + data_json)
+            if response.status_code == 200:
+                response_data = response.json()
+                response_content = response_data['choices'][0]['message']['content']
+                print(response_content)
+            
+            else:
+                print('Failed to make request:', response.status_code)
+                print(response.text)
+            
+            # from together import Together
+
+            # client = Together(api_key="")
+
+            # response = client.chat.completions.create(
+            #     model="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            #     messages=[
+            #         {"role": "system", "content": context_str},
+            #         {"role": "user", "content": query_str}                    
+            #     ],
+            #     max_tokens=512,
+            #     temperature=0.7,
+            #     top_p=0.7,
+            #     top_k=50,
+            #     repetition_penalty=1,
+            #     stop=["<|eot_id|>","<|eom_id|>"],
+            #     stream=True
+            # )
+            # print(response.choices[0].message.content)
+            
+        except Exception as e:
+            print("Failed to complete the request.")
+            print(e)
+            return "FAILED"
+        
+        print("Response: " + str(response))
+        print(context_str, query_str)
+
         return str(response)
 
 # Initialize LLM for RAG
@@ -294,7 +347,7 @@ class MultiAgentWorkflow(Workflow):
         ctx.data["overall_request"] = None
 
         # Initialize the LLM
-        ctx.data["llm"] = OpenAI(model="gpt-4", temperature=0.4, api_key="<api>")
+        ctx.data["llm"] = OpenAI(model="gpt-4", temperature=0.4, api_key="")
 
         return InterfaceAgentEvent()
 
@@ -344,22 +397,31 @@ class MultiAgentWorkflow(Workflow):
 
         print(f"Orchestrator received request: {ev.request}")
 
+        # Initialize tried_tools list if not present
+        if 'tried_tools' not in ctx.data:
+            ctx.data['tried_tools'] = []
+
+        tried_tools = ctx.data['tried_tools']
+
         def emit_image_captioning() -> bool:
             """Call this if the user wants information from image captions."""
             print("__emitted: ImageCaptioningEvent")
             self.send_event(ImageCaptioningEvent(request=ev.request))
+            ctx.data['tried_tools'].append('emit_image_captioning')
             return True
 
         def emit_transcripts() -> bool:
             """Call this if the user wants information from transcripts."""
             print("__emitted: TranscriptsEvent")
             self.send_event(TranscriptsEvent(request=ev.request))
+            ctx.data['tried_tools'].append('emit_transcripts')
             return True
 
         def emit_yolo() -> bool:
             """Call this if the user wants information from object detection."""
             print("__emitted: YoloEvent")
             self.send_event(YoloEvent(request=ev.request))
+            ctx.data['tried_tools'].append('emit_yolo')
             return True
 
         def emit_interface_agent() -> bool:
@@ -374,25 +436,33 @@ class MultiAgentWorkflow(Workflow):
             self.send_event(StopEvent())
             return True
 
-        tools = [
-            FunctionTool.from_defaults(fn=emit_image_captioning),
-            # FunctionTool.from_defaults(fn=emit_transcripts),
-            # FunctionTool.from_defaults(fn=emit_yolo),
+        # Prepare the list of tools, excluding ones that have already been tried
+        tools = []
+        if 'emit_image_captioning' not in tried_tools:
+            tools.append(FunctionTool.from_defaults(fn=emit_image_captioning))
+        if 'emit_transcripts' not in tried_tools:
+            tools.append(FunctionTool.from_defaults(fn=emit_transcripts))
+        if 'emit_yolo' not in tried_tools:
+            tools.append(FunctionTool.from_defaults(fn=emit_yolo))
+        tools.extend([
             FunctionTool.from_defaults(fn=emit_interface_agent),
             FunctionTool.from_defaults(fn=emit_stop)
-        ]
+        ])
 
+        # Update the system prompt to include tried tools
+        tried_tools_str = ', '.join(tried_tools) if tried_tools else 'None'
         system_prompt = (
             f"You are an orchestration agent.\n"
             f"Your job is to decide which tool or agent to run based on the user's request.\n"
             f"You have access to the following tools:\n"
-            f"- image_captioning_tool: Use this for questions about image captions in video frames, timestamps.\n"
-            # f"- transcripts_tool: Use this for questions about video transcripts or any audio requests.\n"
-            # f"- yolo_tool: Use this for questions about objects detected in video frames.\n"
-            f"- emit_interface_agent: Use this if you're unsure which tool to use.\n"
+            f"- emit_image_captioning: Use this for questions about image captions in video frames and return the exact timestamp of the scene described.\n"
+            f"- emit_transcripts: Use this for questions about video transcripts or any audio requests.\n"
+            f"- emit_yolo: Use this for questions about objects detected in video frames.\n"
+            f"- emit_interface_agent: Use this if you're unsure which tool to use or if previous attempts did not satisfy the user's request.\n"
             f"- emit_stop: Use this if the user wants to stop or exit.\n"
-            f"Decide which tool to call based on the user's request, and call it using its exact name.\n"
-            f"If you did not call any tools, return the string 'FAILED' without quotes and nothing else."
+            f"**Important Instructions:**\n"
+            f"- If a tool has already been tried and the user is not satisfied after multiple attempts, try to change to eifher of transcripts, yolo or image_captioning which havent been used previously but matching the context of question.\n"
+            f"- Do not retry automatically; wait for the user's input.\n"
         )
 
         agent_worker = FunctionCallingAgentWorker.from_tools(
@@ -405,16 +475,24 @@ class MultiAgentWorkflow(Workflow):
 
         orchestrator = ctx.data["orchestrator"]
         response = str(orchestrator.chat(ev.request))
+        print(f"Orchestrator agent response: {response}")
 
         if response == "FAILED":
-            print("Orchestration agent failed to return a valid tool; try again")
-            return OrchestratorEvent(request=ev.request)
+            print("Orchestration agent failed to return a valid tool.")
+            # Ask the user if they want to try again
+            user_input = input("No suitable tool was found. Would you like to try again? (yes/no): ").strip().lower()
+            if user_input == 'yes':
+                return InterfaceAgentEvent(request=ev.request)
+            else:
+                return StopEvent()
+        else:
+            # The event has already been sent in the function calls
+            return None
+            
 
     @step(pass_context=True)
     async def image_captioning(self, ctx: Context, ev: ImageCaptioningEvent) -> InterfaceAgentEvent:
-
         print(f"Image Captioning received request: {ev.request}")
-
         if ("image_captioning_agent" not in ctx.data):
             system_prompt = (
                 f"You are a helpful assistant that provides information based on image captions from video frames give timestamps.\n"
@@ -422,7 +500,6 @@ class MultiAgentWorkflow(Workflow):
                 f"Once you have retrieved the information, you *must* call the tool named 'done' to signal that you are done.\n"
                 f"If the user asks for something outside your capabilities, call the tool 'need_help'."
             )
-
             ctx.data["image_captioning_agent"] = BaseAgent(
                 name="Image Captioning Agent",
                 parent=self,
@@ -431,14 +508,10 @@ class MultiAgentWorkflow(Workflow):
                 system_prompt=system_prompt,
                 trigger_event=ImageCaptioningEvent
             )
-
-        return ctx.data["image_captioning_agent"].handle_event(ev)
-
+        return ctx.data["image_captioning_agent"].handle_event(ev) 
     @step(pass_context=True)
     async def transcripts(self, ctx: Context, ev: TranscriptsEvent) -> InterfaceAgentEvent:
-
         print(f"Transcripts received request: {ev.request}")
-
         if ("transcripts_agent" not in ctx.data):
             system_prompt = (
                 f"You are a helpful assistant that provides information based on video transcripts.\n"
@@ -446,7 +519,6 @@ class MultiAgentWorkflow(Workflow):
                 f"Once you have retrieved the information, you *must* call the tool named 'done' to signal that you are done.\n"
                 f"If the user asks for something outside your capabilities, call the tool 'need_help'."
             )
-
             ctx.data["transcripts_agent"] = BaseAgent(
                 name="Transcripts Agent",
                 parent=self,
@@ -455,22 +527,18 @@ class MultiAgentWorkflow(Workflow):
                 system_prompt=system_prompt,
                 trigger_event=TranscriptsEvent
             )
-
         return ctx.data["transcripts_agent"].handle_event(ev)
-
+    
     @step(pass_context=True)
     async def yolo(self, ctx: Context, ev: YoloEvent) -> InterfaceAgentEvent:
-
         print(f"YOLO received request: {ev.request}")
-
         if ("yolo_agent" not in ctx.data):
             system_prompt = (
-                f"You are a helpful assistant that provides information based on objects detected in video frames using object detection.\n"
+                f"You are a helpful assistant that provides information based on objects detected in video frames using object detectin.\n"
                 f"Use the 'yolo_tool' to retrieve information.\n"
                 f"Once you have retrieved the information, you *must* call the tool named 'done' to signal that you are done.\n"
                 f"If the user asks for something outside your capabilities, call the tool 'need_help'."
             )
-
             ctx.data["yolo_agent"] = BaseAgent(
                 name="YOLO Agent",
                 parent=self,
@@ -479,9 +547,8 @@ class MultiAgentWorkflow(Workflow):
                 system_prompt=system_prompt,
                 trigger_event=YoloEvent
             )
-
         return ctx.data["yolo_agent"].handle_event(ev)
-
+    
 draw_all_possible_flows(MultiAgentWorkflow, filename="multi-agent-workflow.html")
 
 ### --- Run the Workflow --- ###

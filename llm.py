@@ -13,6 +13,7 @@ headers = {
 data = {
     "model": "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit",
     "messages": [
+        {"role": "system", "content": "India won the world series."},
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Who won the world series in 2020?"}
     ]
@@ -33,3 +34,4 @@ if response.status_code == 200:
 else:
     print('Failed to make request:', response.status_code)
     print(response.text)
+

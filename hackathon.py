@@ -13,12 +13,95 @@ from PIL import Image
 import ssl, base64
 from ultralytics import YOLO
 from PIL import Image
-from Embedding.embedding_generator import generate_embedding, create_embeddings
+
+import os
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core import Settings
+from pinecone import Pinecone
+from pinecone import ServerlessSpec
+from llama_index.core import VectorStoreIndex, StorageContext
+from llama_index.vector_stores.pinecone import PineconeVectorStore
+from llama_index.core.schema import TextNode
 
 model = YOLO("yolo11n.pt")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
 ssl._create_default_https_context = ssl._create_stdlib_context
 OPENAI_API_KEY = ""
+
+
+def create_embeddings(data):
+    # hugginface model for embedding
+    Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-base-en-v1.5")
+
+    #pinconeAPI
+    os.environ[
+        "PINECONE_API_KEY"
+    ] = "aafc89a7-408c-4bbc-8193-58e103949c98"
+
+    api_key = os.environ["PINECONE_API_KEY"]
+    pc = Pinecone(api_key=api_key)
+
+    # delete if needed
+    # pc.delete_index("llamaindex-ragathon-demo-index-v2")
+
+    # creating index for now not needed
+    # pc.create_index(
+    #     "llamaindex-ragathon-demo-index-v2",
+    #     dimension=768, #dimesions for the embedding
+    #     metric="euclidean",
+    #     spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    # )
+
+    pinecone_index = pc.Index("llamaindex-ragathon-demo-index-v2")
+
+    vector_store = PineconeVectorStore(
+        pinecone_index=pinecone_index, namespace="Default"
+    )
+
+    nodes =[]
+    for d in data:
+        nodes.append(TextNode(
+            text = "Timestamp: " + str(d['timestamp']) + "\n" + 'video_id: ' + str(d['video_id']) + "\n\n" + d['text'],
+            metadata={
+                "timestamp":d['timestamp'],
+                "video_id":d['video_id'],
+                "agent": d['agent']
+            }
+        ))
+
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    index = VectorStoreIndex(nodes, storage_context=storage_context)
+
+def generate_embedding(agent, video_id, base_path):
+    agent_folder_mapping = {
+        'image_captioning': 'image_captionings',
+        'transcripts': 'transcripts',
+        'yolo': 'yolo_outputs'  # Add other agents and their folder names as needed
+    }
+    
+    if agent not in agent_folder_mapping:
+        raise ValueError(f"Unknown agent '{agent}'")
+    
+    path = os.path.join(base_path, 'chunks', agent_folder_mapping[agent])
+    data_array = []
+    
+    for filename in os.listdir(path):
+        if filename.endswith('.txt'):
+            parts = filename.split('_')
+            timestamp = parts[1]
+            with open(os.path.join(path, filename), 'r') as file:
+                text = file.read()
+            
+            entry = {
+                'text': f"Timestamp: {timestamp}\nvideo_id: {video_id}\n\n{text.strip()}",
+                'timestamp': timestamp,
+                'video_id': video_id,
+                'agent': agent
+            }
+            data_array.append(entry)
+    
+    create_embeddings(data_array)
 
 class VideoProcessingWorkflow:
     def __init__(self, video_path, output_dir):
@@ -165,8 +248,13 @@ class VideoProcessingWorkflow:
 
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
         response_dict = response.json()
-        content = response_dict['choices'][0]['message']['content']
-        return content                        
+        
+        if("choices" in response_dict):      
+            content = response_dict['choices'][0]['message']['content']
+            return content      
+        else:
+            print(response_dict)
+            raise "Error in response"                  
         
     def get_frame_features(self, frame, model, transform):
         """Extract features from a frame using the specified model and transformation."""
@@ -175,10 +263,6 @@ class VideoProcessingWorkflow:
         with torch.no_grad():
             return model(frame_tensor)
         
-def push_embeddings():
-    generate_embedding('image_captioning')
-    generate_embedding('transcripts')
-
 def download_video(url, output_path):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -238,16 +322,16 @@ def create_yolo_chunks():
     create_embeddings(data)
 
 if __name__ == "__main__":
-    source = "sources/bahubali/"
+    video_id = 'bahubali'
+    source = f"sources/{video_id}/"
     video_path = source + "movie.mp4"
     output_dir = source + "chunks"
     
     print("YOUTUBE: Download started")
     download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs', source)
     
-    workflow = VideoProcessingWorkflow(video_path, output_dir)
-    asyncio.run(workflow.split_video_and_audio())
+    # workflow = VideoProcessingWorkflow(video_path, output_dir)
+    # asyncio.run(workflow.split_video_and_audio())
     create_yolo_chunks() # this does pushiing of embeddings also 
-    push_embeddings() # this push embedding excpet yolo
-
-
+    generate_embedding('image_captioning', video_id, source)
+    generate_embedding('transcripts', video_id, source)
