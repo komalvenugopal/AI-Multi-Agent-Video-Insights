@@ -8,7 +8,6 @@ from llama_index.vector_stores.pinecone import PineconeVectorStore
 from llama_index.core.schema import TextNode
 
 
-
 '''
     data should be an array of json Objects
     [
@@ -16,6 +15,7 @@ from llama_index.core.schema import TextNode
             text:
             timestamp:
             video_id:
+            agent:
         }
     ]
 
@@ -37,9 +37,9 @@ def create_embeddings(data):
     pc = Pinecone(api_key=api_key)
 
     # delete if needed
-    pc.delete_index("llamaindex-ragathon-demo-index-v2")
+    # pc.delete_index("llamaindex-ragathon-demo-index-v2")
 
-    #creating index for now not needed
+    # creating index for now not needed
     # pc.create_index(
     #     "llamaindex-ragathon-demo-index-v2",
     #     dimension=768, #dimesions for the embedding
@@ -56,10 +56,11 @@ def create_embeddings(data):
     nodes =[]
     for d in data:
         nodes.append(TextNode(
-            text = d.text,
+            text = d['text'],
             metadata={
-                "timestamp":d.timestamp
-                "video_id":d.video_id
+                "timestamp":d['timestamp'],
+                "video_id":d['video_id'],
+                "agent": d['agent']
             }
         ))
 
@@ -67,3 +68,35 @@ def create_embeddings(data):
     index = VectorStoreIndex(nodes, storage_context=storage_context)
 
 
+def generate_embedding(agent):
+    path=''
+    if(agent=='image_captioning'):
+        path = 'sources/bahubali/chunks/image_captionings'
+    elif agent == 'transcripts':
+        path ='sources/bahubali/chunks/transcripts'
+    
+
+    data_array = []
+    for filename in os.listdir(path):
+        print(filename)
+        if filename.endswith('.txt'):
+            parts = filename.split('_')
+            timestamp = parts[1]
+            print(timestamp)
+            with open(os.path.join(path, filename), 'r') as file:
+                text = file.read()
+            
+            # Create a dictionary and append it to the data_array
+            entry = {
+                'text': text.strip(),
+                'timestamp': timestamp,
+                'video_id': 'bahubali',
+                'agent': agent  # Replace with the appropriate value if needed
+            }
+            data_array.append(entry)
+    print(data_array)
+    create_embeddings(data_array)
+    # print(data_array[2]['timestamp'])
+
+
+    

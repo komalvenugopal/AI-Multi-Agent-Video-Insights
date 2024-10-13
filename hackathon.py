@@ -13,6 +13,7 @@ from PIL import Image
 import ssl, base64
 from ultralytics import YOLO
 from PIL import Image
+from Embedding.embedding_generator import generate_embedding
 
 model = YOLO("yolo11n.pt")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
@@ -53,7 +54,7 @@ class VideoProcessingWorkflow:
                 print(image_captioning_content)
 
                 print(self.output_dir)
-                image_captioning_path = os.path.join(self.output_dir, "image_captionings", f"image_captioning_{start_time}_{end_time}.txt")
+                image_captioning_path = os.path.join(self.output_dir, "image_captionings", f"imagecaptioning_{start_time}_{end_time}.txt")
 
                 print(self.output_dir)
                 print(image_captioning_path)
@@ -174,6 +175,10 @@ class VideoProcessingWorkflow:
         with torch.no_grad():
             return model(frame_tensor)
         
+def push_embeddings():
+    generate_embedding('image_captioning')
+    generate_embedding('transcripts')
+
 def download_video(url, output_path):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -209,8 +214,11 @@ if __name__ == "__main__":
     video_path = source + "movie.mp4"
     output_dir = source + "chunks"
     
-    print("YOUTUBE: Download started")
-    download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs', source)
+    # print("YOUTUBE: Download started")
+    # download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs', source)
     
-    workflow = VideoProcessingWorkflow(video_path, output_dir)
-    asyncio.run(workflow.split_video_and_audio())
+    #workflow = VideoProcessingWorkflow(video_path, output_dir)
+    # asyncio.run(workflow.split_video_and_audio())
+    push_embeddings()
+
+
