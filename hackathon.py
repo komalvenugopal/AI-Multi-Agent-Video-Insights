@@ -3,9 +3,14 @@ import os
 import requests
 from moviepy.editor import VideoFileClip
 from bs4 import BeautifulSoup
+from pytube import YouTube
+from pytubefix import YouTube
+from pytubefix.cli import on_progress
+import os
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
+import ssl
 
-
-
+ssl._create_default_https_context = ssl._create_stdlib_context
 class VideoProcessingWorkflow:
     def __init__(self, video_path, output_dir):
         self.video_path = video_path
@@ -57,11 +62,32 @@ class VideoProcessingWorkflow:
         except Exception as e:
             print(f"Error opening video file: {str(e)}")
 
+def download_video(url, output_path):
+    """
+    Download a video from a given url and save it to the output path.
+
+    Parameters:
+    url (str): The url of the video to download.
+    output_path (str): The path to save the video to.
+
+    Returns:
+    dict: A dictionary containing the metadata of the video.
+    """
+
+    yt = YouTube(url, on_progress_callback = on_progress)
+    print(yt.title)
+ 
+    ys = yt.streams.get_highest_resolution()
+    ys.download(output_path=output_path, filename='bahubali.mp4')
+
+
 if __name__ == "__main__":
     source = "sources/bahubali/"
-    video_path = source + "video.mp4"
+    video_path = source + "bahubali.mp4"
     output_dir = source + "chunks"
-
+    print("YOUTUBE: Download started")
+    download_video('https://www.youtube.com/watch?v=7z1bv8CtQxs',source)
+    # audio to text
     API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
     headers = {"Authorization": "Bearer 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"}
     def query(filename):
