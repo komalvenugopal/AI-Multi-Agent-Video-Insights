@@ -10,10 +10,14 @@ import torch
 from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 from PIL import Image
-import ssl
+import ssl, base64
+from ultralytics import YOLO
+from PIL import Image
 
+model = YOLO("yolo11n.pt")
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/5.1/bin/ffmpeg"
 ssl._create_default_https_context = ssl._create_stdlib_context
+OPENAI_API_KEY = ""
 
 class VideoProcessingWorkflow:
     def __init__(self, video_path, output_dir):
@@ -44,7 +48,21 @@ class VideoProcessingWorkflow:
                 # Extract keyframes
                 images_dir = os.path.join(self.output_dir, "images", f"video_{start_time}_{end_time}")
                 os.makedirs(images_dir, exist_ok=True)
-                self.extract_keyframes_dl(subclip_path, images_dir)
+                image_captioning_content = self.extract_keyframes_dl(subclip_path, images_dir)
+                print("Final ")
+                print(image_captioning_content)
+
+                print(self.output_dir)
+                image_captioning_path = os.path.join(self.output_dir, "image_captionings", f"image_captioning_{start_time}_{end_time}.txt")
+
+                print(self.output_dir)
+                print(image_captioning_path)
+                os.makedirs(os.path.dirname(image_captioning_path), exist_ok=True)
+
+                with open(image_captioning_path, 'w') as f:
+                    f.write(image_captioning_content)
+                print(f"Processed and transcribed video and audio from {start_time} to {end_time} seconds.")
+                
         except Exception as e:
             print(f"Error processing media from {start_time} to {end_time} seconds: {str(e)}")
 
@@ -63,20 +81,25 @@ class VideoProcessingWorkflow:
         except Exception as e:
             print(f"Error opening video file: {str(e)}")
 
-    def get_frame_features(self, frame, model, transform):
-        frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        frame_tensor = transform(frame).unsqueeze(0)
-        with torch.no_grad():
-            features = model(frame_tensor)
-        return features
-
-    def extract_keyframes_dl(self, video_path, output_dir, threshold=0.3):
+    def extract_keyframes_dl(self, video_path, output_dir, threshold=0.5):
+        for item in os.listdir(output_dir):
+            item_path = os.path.join(output_dir, item)
+            if os.path.isfile(item_path) or os.path.islink(item_path):
+                os.unlink(item_path)  # Remove files and links
+        print(f"Cleared all contents in {output_dir}")
+        
         print("Generating keyframes...")
         cap = cv2.VideoCapture(video_path)
         ret, prev_frame = cap.read()
 
+        if not ret:
+            print("Failed to read video")
+            cap.release()
+            return
+
+        # Prepare the transformation and model for feature extraction
         transform = Compose([
-            Resize((224, 224)),
+            Resize((224, 224)),  # Resize frames for model input
             ToTensor(),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
@@ -94,16 +117,63 @@ class VideoProcessingWorkflow:
             features = self.get_frame_features(frame, model, transform)
             similarity = torch.nn.functional.cosine_similarity(prev_features, features, dim=1)
 
+            # Save frame as a keyframe if the similarity is below the threshold
             if similarity.item() < threshold:
                 frame_path = os.path.join(output_dir, f"keyframe_{frame_count}.jpg")
-                cv2.imwrite(frame_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+                cv2.imwrite(frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 90])  # Save with high quality
                 print(f"Saved keyframe {frame_count} at {frame_path}")
+                prev_features = features  # Update features only if a keyframe is saved
 
-            prev_features = features
             frame_count += 1
 
         cap.release()
+        folder_path=output_dir
+        image_paths = os.listdir(folder_path)
+        print(image_paths)
 
+        # Getting the base64 string
+        base64_images = [encode_image(os.path.join(folder_path,image_path)) for image_path in image_paths]
+        print(len(base64_images))
+
+        headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+
+        payload = {
+        "model": "gpt-4o",
+        "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "These are the key frames images which indicate change of scenes when extracted from the set of image frames. Give me an good overall description summary of what is happening in the video so that whenever I search for it in the future, i can know what is happening here."
+                    }
+                ] + [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                    for base64_image in base64_images
+                ]
+            }],
+            "max_tokens":300,
+        }
+
+        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        response_dict = response.json()
+        content = response_dict['choices'][0]['message']['content']
+        return content                        
+        
+    def get_frame_features(self, frame, model, transform):
+        """Extract features from a frame using the specified model and transformation."""
+        frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        frame_tensor = transform(frame).unsqueeze(0)
+        with torch.no_grad():
+            return model(frame_tensor)
+        
 def download_video(url, output_path):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -128,6 +198,11 @@ def query(filename):
         data = f.read()
     response = requests.post(API_URL, headers=headers, data=data)
     return response.json()
+
+# Function to encode the image
+def encode_image(image_path):
+  with open(image_path, "rb") as image_file:
+    return base64.b64encode(image_file.read()).decode('utf-8')
 
 if __name__ == "__main__":
     source = "sources/bahubali/"
